@@ -67,7 +67,7 @@ class UploadClient:
         self.trace['eventType'] = 'upload'
         self.trace['eventVersion'] = version.RUCIO_VERSION[0]
 
-    def upload(self, items, summary_file_path=None):
+    def upload(self, items, summary_file_path=None, local=False):
         """
 
         :param items: List of dictionaries. Each dictionary describing a file to upload. Keys:
@@ -104,6 +104,11 @@ class UploadClient:
         registered_dataset_dids = set()
         registered_file_dids = set()
         for file in files:
+            if local:
+                cmd = 'mv {0} {1}'.format(file['path'], file['destination_path'])
+                from rucio.tests.common import execute
+                execute(cmd)
+
             rse = file['rse']
             if not self.rses.get(rse):
                 rse_settings = self.rses.setdefault(rse, rsemgr.get_rse_info(rse))
