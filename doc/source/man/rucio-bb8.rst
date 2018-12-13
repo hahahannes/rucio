@@ -5,10 +5,6 @@ Daemon rucio-bb8
    :func: get_parser
    :prog: rucio-bb8
 
-Description
-===========
-The BB8 daemon is responsible for rebalancing data between RSEs.
-
 Force expression - ideal case
 -----------------------------
 --force-expression option of bb8 defines a set of rses where the rebalanced data will be sent. It can be one rse or group of rses. Complicated case is when we intend to rebalance distributed dataset, of which only part is present at rebalanced rse. Than only that part will be rebalanced elsewhere and the rest of the distributed dataset stays at its current locations.
@@ -81,4 +77,3 @@ Same for destinations.
 
 .. image:: ../images/bb8_5.svg
    :height: 500px
-           s
