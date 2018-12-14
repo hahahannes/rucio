@@ -163,6 +163,8 @@ def print_subcommands(data, nested_content, markDownHelp=False):
 
     definitions = map_nested_definitions(nested_content)
     items = []
+    print(data)
+    print(nested_content)
     if 'children' in data:
         subCommands = nodes.section(ids=["Sub-commands:"])
         subCommands += nodes.title('Sub-commands:', 'Sub-commands:')
