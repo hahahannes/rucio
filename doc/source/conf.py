@@ -18,7 +18,7 @@
 #
 import os
 import sys
-# sys.path.insert(0, os.path.abspath('.'))
+sys.path.insert(0, os.path.abspath('./lib/rucio/common/doc/argparse'))
 
 from mock import Mock as MagicMock
 
@@ -47,8 +47,8 @@ sys.modules.update((mod_name, Mock()) for mod_name in MOCK_MODULES)
 # ones.
 extensions = ['sphinx.ext.autodoc',
               'sphinx.ext.doctest',
-              'sphinx.ext.todo',
-              'rucio.common.doc.argparse.ext',
+              'sphinx.ext.todo','argparse',
+              #'rucio.common.doc.argparse.ext',
               'sphinxcontrib.httpdomain',
               'sphinxcontrib.autohttp.flask',
               'sphinxcontrib.autohttp.flaskqref']
