@@ -5,8 +5,9 @@ alembic==0.9.9                                    # Lightweight database migrati
 Mako==1.0.7                                       # Templating language - Dependency of alembic
 python-editor==1.0.3                              # Programmatically open an editor, capture the result
 flup==1.0.3                                       # Needed to deploy web.py in lighthttpd
-web.py==0.39                                      # Python web framework
+web.py==0.40.dev1; python_version > '2.7'         # Python web framework
 python-memcached==1.59                            # Quick and small memcached client for Python
+python3-memcached; python_version > '2.7'
 jsonschema==2.6.0                                 # JSON Schema
 python-dateutil==2.7.2                            # Extensions to the standard datetime module
 pysftp==0.2.9                                     # forces installation of paramikoi and pycrypto
