@@ -13,7 +13,7 @@
 # - Joaquin Bogado, <jbogadog@cern.ch>, 2016
 # - Thomas Beermann, <thomas.beermann@cern.ch>, 2016
 # - Cedric Serfon, <cedric.serfon@cern.ch>, 2017-2018
-# - Hannes Hansen, <hannes.jakob.hansen@cern.ch>, 2018
+# - Hannes Hansen, <hannes.jakob.hansen@cern.ch>, 2018-2019
 #
 # PY3K COMPATIBLE
 
@@ -25,16 +25,16 @@ import traceback
 
 from six import string_types
 
-from sqlalchemy import and_, or_, func
+from sqlalchemy import and_, or_, func, update, tuple_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.sql.expression import asc, bindparam, text, false, true
+from sqlalchemy.sql.expression import asc, bindparam, text, false, true, literal_column
 
 from rucio.common.exception import RequestNotFound, RucioException, UnsupportedOperation
 from rucio.common.utils import generate_uuid, chunks
-from rucio.core import transfer_limits as transfer_limits_core
+from rucio.core import transfer_limits as transfer_limits_core, config as config_core
 from rucio.core.message import add_message
 from rucio.core.monitor import record_counter, record_timer
-from rucio.core.rse import get_rse_id, get_rse_name
+from rucio.core.rse import get_rse_id, get_rse_name, get_rse_transfer_limits
 from rucio.db.sqla import models
 from rucio.db.sqla.constants import RequestState, RequestType, FTSState, ReplicaState, LockState, RequestErrMsg
 from rucio.db.sqla.session import read_session, transactional_session
@@ -879,19 +879,172 @@ def get_stats_by_activity_dest_state(state, session=None):
 
 
 @transactional_session
+def release_old_waiting_requests(rse, activity=None, rse_id=None, account=None, session=None):
+    """
+    Release waiting requests that were waiting too long and exceeded the maximum waiting time to be released.
+
+    :param rse:              The RSE name.
+    :param activity:         The activity.
+    :param rse_id:           The RSE id.
+    :param account:          The account name whose requests to release.
+    :param session:          The database session.
+    """
+    if not rse_id:
+        rse_id = get_rse_id(rse=rse, session=session)
+    deadline_to_be_released = config_core.get('throttler', 'deadline_%s' % rse_id, default=False, use_cache=False, session=session)
+    amount_released_requests = 0
+    if deadline_to_be_released:
+        old_requests_subquery = session.query(models.Request.id)\
+                                       .filter(models.Request.requested_at < datetime.datetime.now() - datetime.timedelta(hours=deadline_to_be_released))\
+                                       .filter_by(dest_rse_id=rse_id, state=RequestState.WAITING)
+        if activity:
+            old_requests_subquery = old_requests_subquery.filter(models.Request.activity == activity)
+        if account:
+            old_requests_subquery = old_requests_subquery.filter(models.Request.account == account)
+        old_requests_subquery = old_requests_subquery.subquery()
+        statement = update(models.Request).where(models.Request.id.in_(old_requests_subquery)).values(state=RequestState.QUEUED)
+        amount_released_requests = session.execute(statement).rowcount
+    return amount_released_requests
+
+
+@transactional_session
+def release_waiting_requests_fifo(rse, activity=None, rse_id=None, count=None, account=None, session=None):
+    """
+    Release waiting requests. Transfer request that were requested first, get released first (FIFO).
+
+    :param rse:              The RSE name.
+    :param activity:         The activity.
+    :param rse_id:           The RSE id.
+    :param count:            The count to be released. If None, release all waiting requests.
+    :param account:          The account name whose requests to release.
+    :param session:          The database session.
+    """
+    if not rse_id:
+        rse_id = get_rse_id(rse=rse, session=session)
+
+    subquery = session.query(models.Request.id)\
+                      .filter(models.Request.dest_rse_id == rse_id)\
+                      .filter(models.Request.state == RequestState.WAITING)\
+                      .order_by(asc(models.Request.requested_at))
+    if activity:
+        subquery = subquery.filter(models.Request.activity == activity)
+    if account:
+        subquery = subquery.filter(models.Request.account == account)
+    subquery = subquery.limit(count).with_for_update()
+
+    rowcount = session.query(models.Request)\
+                      .filter(models.Request.id.in_(subquery))\
+                      .update({'state': RequestState.QUEUED},
+                              synchronize_session=False)
+    return rowcount
+
+
+@transactional_session
+def release_waiting_requests_grouped_fifo(rse, activity=None, rse_id=None, count=None, account=None, session=None):
+    """
+    Release waiting requests. Transfer requests that were requested first, get released first (FIFO).
+    Also all requests to DIDs that are attached to the same dataset get released, if one children of the dataset is choosed to be released (Grouped FIFO).
+
+    :param rse:              The RSE name.
+    :param activity:         The activity.
+    :param rse_id:           The RSE id.
+    :param count:            The count to be released. If None, release all waiting requests.
+    :param account:          The account name whose requests to release.
+    :param session:          The database session.
+    """
+    if not rse_id:
+        rse_id = get_rse_id(rse=rse, session=session)
+
+    max_transfer_volumn = 0
+    if activity:
+        max_transfer_volumn = get_rse_transfer_limits(rse, activity, rse_id, session=session)[activity][rse_id]['max_volumn']
+    else:
+        activity = 'all_activities'
+        max_transfer_volumn = get_rse_transfer_limits(rse, activity, rse_id, session=session)[activity][rse_id]['max_volumn']
+
+    subquery_0 = session.query(models.DataIdentifierAssociation.child_name, models.DataIdentifierAssociation.child_scope).subquery()
+
+    # query requests of unattached DIDs and simulate an attachment to a collection by setting the dataset name and scope with the DID name and scope
+    subquery_1 = session.query(models.Request.name, models.Request.scope, models.Request.id, models.Request.requested_at, models.Request.name.label('dataset_name'), models.Request.scope.label('dataset_scope'))\
+                        .filter(~tuple_(models.Request.name, models.Request.scope).in_(subquery_0))\
+                        .filter(models.Request.dest_rse_id == rse_id)\
+                        .filter(models.Request.state == RequestState.WAITING)
+
+    # query DIDs that are attached to a collection and add a column indicating the order of attachment in case of mulitple attachments
+    subquery_2 = session.query(models.DataIdentifierAssociation.child_name, models.DataIdentifierAssociation.child_scope, models.DataIdentifierAssociation.name, models.DataIdentifierAssociation.scope,
+                               func.row_number().over(partition_by=(models.DataIdentifierAssociation.child_name, models.DataIdentifierAssociation.child_scope),
+                                                      order_by=models.DataIdentifierAssociation.created_at).label('order_of_attachment'))\
+                        .subquery()
+
+    # query waiting requests and join with first attached parent collection
+    subquery_3 = session.query(models.Request.name, models.Request.scope, models.Request.id.label('id'), models.Request.requested_at, subquery_2.c.name.label('dataset_name'), subquery_2.c.scope.label('dataset_scope'))\
+                        .join(subquery_2, and_(models.Request.name == subquery_2.c.child_name, models.Request.scope == subquery_2.c.child_scope, subquery_2.c.order_of_attachment == 1))\
+                        .filter(models.Request.dest_rse_id == rse_id)\
+                        .filter(models.Request.state == RequestState.WAITING)
+
+    # combine results of attached and unattached DIDS
+    subquery_3 = subquery_3.union_all(subquery_1)
+    if activity:
+        subquery_3 = subquery_3.filter(models.Request.activity == activity)
+    if account:
+        subquery_3 = subquery_3.filter(models.Request.account == account)
+    subquery_3 = subquery_3.subquery()
+
+    # query requests of unattached DIDs and simulate an attachment to a collection with one children and the requested_at date as the oldest requested_at date of the collection
+    subquery_4 = session.query(models.Request.bytes.label('volumn'), models.Request.requested_at.label('oldest_requested_at'), literal_column('1').label('amount_childs'), models.Request.scope, models.Request.name)\
+                        .filter(~tuple_(models.Request.name, models.Request.scope).in_(subquery_0))\
+                        .filter(models.Request.dest_rse_id == rse_id)\
+                        .filter(models.Request.state == RequestState.WAITING)
+
+    # group all requests based on the attachments and calculate the oldest request date and the amount of attached DIDs per collection
+    subquery_5 = session.query(func.sum(models.Request.bytes).label('volumn'), func.min(models.Request.requested_at).label('oldest_requested_at'), func.count().label('amount_childs'), subquery_2.c.scope.label('scope'), subquery_2.c.name.label('name'))\
+                        .join(subquery_2, and_(models.Request.name == subquery_2.c.child_name, models.Request.scope == subquery_2.c.child_scope, subquery_2.c.order_of_attachment == 1))\
+                        .filter(models.Request.dest_rse_id == rse_id)\
+                        .filter(models.Request.state == RequestState.WAITING)\
+                        .group_by(subquery_2.c.name, subquery_2.c.scope)
+
+    # combine results of attached and unattached DIDs
+    subquery_5 = subquery_5.union_all(subquery_4).subquery()
+
+    # cumulate the amount of children, and volumns ordered by the oldest request date
+    subquery_6 = session.query(subquery_5.c.name, subquery_5.c.scope, subquery_5.c.amount_childs, subquery_5.c.oldest_requested_at,
+                               func.sum(subquery_5.c.amount_childs).over(order_by=(subquery_5.c.oldest_requested_at)).label('cum_amount_childs'),
+                               func.sum(subquery_5.c.volumn).over(order_by=(subquery_5.c.oldest_requested_at)).label('cum_volumn'))\
+                        .subquery()
+
+    subquery_7 = session.query(func.coalesce(func.sum(models.Request.bytes), 0)).filter_by(state=RequestState.SUBMITTED, dest_rse_id=rse_id)
+    if activity:
+        subquery_7 = subquery_7.filter_by(activity=activity)
+    if account:
+        subquery_7 = subquery_7.filter_by(account=account)
+    subquery_7 = subquery_7.subquery()
+
+    # combine the cumulation with each request and remove requests where the cumulated amount of replicas exceeds the limit
+    subquery_8 = session.query(subquery_3.c.id)\
+                        .join(subquery_6, and_(subquery_3.c.dataset_name == subquery_6.c.name, subquery_3.c.dataset_scope == subquery_6.c.scope))\
+                        .filter(or_(subquery_6.c.cum_amount_childs - subquery_6.c.amount_childs < count, and_(subquery_6.c.cum_amount_childs - subquery_6.c.amount_childs >= count, subquery_6.c.cum_volumn + subquery_7 < max_transfer_volumn)))\
+                        .subquery()
+
+    statement = update(models.Request).where(models.Request.id.in_(subquery_8)).values(state=RequestState.QUEUED)
+    return session.execute(statement).rowcount
+
+
+@transactional_session
 def release_waiting_requests(rse, activity=None, rse_id=None, count=None, account=None, session=None):
     """
     Release waiting requests.
 
-    :param rse:       The RSE name.
-    :param activity:  The activity.
-    :param rse_id:    The RSE id.
-    :param count:     The count to be released. If None, release all waiting requests.
+    :param rse:              The RSE name.
+    :param activity:         The activity.
+    :param rse_id:           The RSE id.
+    :param count:            The count to be released. If None, release all waiting requests.
+    :param account:          The account name whose requests to release.
+    :param session:          The database session.
     """
     try:
+        rowcount = 0
         if not rse_id:
             rse_id = get_rse_id(rse=rse, session=session)
-        rowcount = 0
 
         if count is None:
             query = session.query(models.Request).\
@@ -902,20 +1055,13 @@ def release_waiting_requests(rse, activity=None, rse_id=None, count=None, accoun
                 query = query.filter_by(account=account)
             rowcount = query.update({'state': RequestState.QUEUED}, synchronize_session=False)
         elif count > 0:
-            subquery = session.query(models.Request.id)\
-                              .filter(models.Request.dest_rse_id == rse_id)\
-                              .filter(models.Request.state == RequestState.WAITING)\
-                              .order_by(asc(models.Request.requested_at))
-            if activity:
-                subquery = subquery.filter(models.Request.activity == activity)
-            if account:
-                subquery = subquery.filter(models.Request.account == account)
-            subquery = subquery.limit(count).with_for_update()
-
-            rowcount = session.query(models.Request)\
-                              .filter(models.Request.id.in_(subquery))\
-                              .update({'state': RequestState.QUEUED},
-                                      synchronize_session=False)
+            release_strategy = config_core.get('throttler', 'release_strategy_%s' % rse_id, default='fifo', use_cache=False, session=session)
+            if release_strategy == 'grouped_fifo':
+                # release specific amount of requests that were requested first but also release all requests of a collection if one children is selected
+                rowcount = release_waiting_requests_grouped_fifo(rse, activity, rse_id, count, account, session=session)
+            elif release_strategy == 'fifo':
+                # release specific amount of requests that were requested first
+                rowcount = release_waiting_requests_fifo(rse, activity, rse_id, count, account, session=session)
         return rowcount
     except IntegrityError as error:
         raise RucioException(error.args)
