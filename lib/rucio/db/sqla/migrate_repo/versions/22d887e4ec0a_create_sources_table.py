@@ -54,7 +54,7 @@ def upgrade():
 
         create_primary_key('SOURCES_PK', 'sources', ['request_id', 'rse_id', 'scope', 'name'])
         create_foreign_key('SOURCES_REQ_ID_FK', 'sources', 'requests', ['request_id'], ['id'])
-        create_foreign_key('SOURCES_REPLICA_FK', 'sources', 'replicas', ['scope', 'name', 'rse_id'], ['scope', 'name', 'rse_id'])
+        create_foreign_key('SOURCES_REPLICA_FK', 'sources', 'replicas', ['rse_id', 'scope', 'name'], ['rse_id', 'scope', 'name'])
         create_foreign_key('SOURCES_RSES_FK', 'sources', 'rses', ['rse_id'], ['id'])
         create_foreign_key('SOURCES_DST_RSES_FK', 'sources', 'rses', ['dest_rse_id'], ['id'])
         create_check_constraint('SOURCES_CREATED_NN', 'sources', 'created_at is not null')

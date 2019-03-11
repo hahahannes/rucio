@@ -98,7 +98,10 @@ def get_config_limits():
     """
 
     config_limits = {}
-    items = config_core.items('throttler')
+    if using_memcache:
+        items = config_core.items('throttler')
+    else:
+        items = config_core.items('throttler', use_cache=False)
     for opt, value in items:
         try:
             activity, rsename = opt.split(',')
@@ -123,8 +126,10 @@ def get_config_limit(activity, rse_id):
 
     :returns: max_transfers if exists else None.
     """
+    result = NoValue()
     key = 'config_limits'
-    result = REGION_SHORT.get(key)
+    if using_memcache:
+        result = REGION_SHORT.get(key)
     if type(result) is NoValue:
         try:
             logging.debug("Refresh rse config limits")
