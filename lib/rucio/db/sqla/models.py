@@ -774,7 +774,8 @@ class RSEFileAssociation(BASE, ModelBase):
                    CheckConstraint('bytes IS NOT NULL', name='REPLICAS_SIZE_NN'),
                    CheckConstraint('lock_cnt IS NOT NULL', name='REPLICAS_LOCK_CNT_NN'),
                    Index('REPLICAS_TOMBSTONE_IDX', 'tombstone'),
-                   Index('REPLICAS_PATH_IDX', 'path', mysql_length=NAME_LENGTH))
+                   Index('REPLICAS_PATH_IDX', 'path', mysql_length=NAME_LENGTH),
+                   Index('REPLICAS_PK_IDX', 'scope', 'name', 'rse_id'))
 
 
 class CollectionReplica(BASE, ModelBase):
@@ -846,7 +847,7 @@ class ReplicationRule(BASE, ModelBase):
     locks_stuck_cnt = Column(BigInteger, server_default='0')
     source_replica_expression = Column(String(255))
     activity = Column(String(50), default='default')
-    grouping = Column(RuleGrouping.db_type(name='RULES_GROUPING_CHK'), default=RuleGrouping.ALL)
+    rule_grouping = Column(RuleGrouping.db_type(name='RULES_GROUPING_CHK'), default=RuleGrouping.ALL)
     notification = Column(RuleNotification.db_type(name='RULES_NOTIFICATION_CHK'), default=RuleNotification.NO)
     stuck_at = Column(DateTime)
     purge_replicas = Column(Boolean(name='RULES_PURGE_REPLICAS_CHK'), default=False)
@@ -866,7 +867,7 @@ class ReplicationRule(BASE, ModelBase):
                    CheckConstraint('STATE IS NOT NULL', name='RULES_STATE_NN'),
                    CheckConstraint('SCOPE IS NOT NULL', name='RULES_SCOPE_NN'),
                    CheckConstraint('NAME IS NOT NULL', name='RULES_NAME_NN'),
-                   CheckConstraint('GROUPING IS NOT NULL', name='RULES_GROUPING_NN'),
+                   CheckConstraint('RULE_GROUPING IS NOT NULL', name='RULES_GROUPING_NN'),
                    CheckConstraint('COPIES IS NOT NULL', name='RULES_COPIES_NN'),
                    CheckConstraint('LOCKED IS NOT NULL', name='RULES_LOCKED_NN'),
                    CheckConstraint('ACCOUNT IS NOT NULL', name='RULES_ACCOUNT_NN'),

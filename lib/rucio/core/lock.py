@@ -332,7 +332,7 @@ def successful_transfer(scope, name, rse_id, nowait, session=None):
         elif rule.locks_replicating_cnt == 0 and rule.state == RuleState.REPLICATING:
             rule.state = RuleState.OK
             # Try to update the DatasetLocks
-            if rule.grouping != RuleGrouping.NONE:
+            if rule.rule_grouping != RuleGrouping.NONE:
                 ds_locks = session.query(models.DatasetLock).with_for_update(nowait=nowait).filter_by(rule_id=rule.id)
                 for ds_lock in ds_locks:
                     ds_lock.state = LockState.OK
@@ -387,7 +387,7 @@ def failed_transfer(scope, name, rse_id, error_message=None, broken_rule_id=None
             rule.state = RuleState.SUSPENDED
             rule.error = (broken_message[:245] + '...') if len(broken_message) > 245 else broken_message
             # Try to update the DatasetLocks
-            if rule.grouping != RuleGrouping.NONE:
+            if rule.rule_grouping != RuleGrouping.NONE:
                 ds_locks = session.query(models.DatasetLock).with_for_update(nowait=nowait).filter_by(rule_id=rule.id)
                 for ds_lock in ds_locks:
                     ds_lock.state = LockState.STUCK
@@ -395,7 +395,7 @@ def failed_transfer(scope, name, rse_id, error_message=None, broken_rule_id=None
             if rule.state != RuleState.STUCK:
                 rule.state = RuleState.STUCK
                 # Try to update the DatasetLocks
-                if rule.grouping != RuleGrouping.NONE:
+                if rule.rule_grouping != RuleGrouping.NONE:
                     ds_locks = session.query(models.DatasetLock).with_for_update(nowait=nowait).filter_by(rule_id=rule.id)
                     for ds_lock in ds_locks:
                         ds_lock.state = LockState.STUCK

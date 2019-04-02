@@ -72,9 +72,9 @@ def rebalance_rule(parent_rule, activity, rse_expression, priority, source_repli
     else:
         lifetime = (parent_rule['expires_at'] - datetime.utcnow()).days * 24 * 3600 + (parent_rule['expires_at'] - datetime.utcnow()).seconds
 
-    if parent_rule['grouping'] == RuleGrouping.ALL:
+    if parent_rule['rule_grouping'] == RuleGrouping.ALL:
         grouping = 'ALL'
-    elif parent_rule['grouping'] == RuleGrouping.NONE:
+    elif parent_rule['rule_grouping'] == RuleGrouping.NONE:
         grouping = 'NONE'
     else:
         grouping = 'DATASET'
@@ -264,7 +264,7 @@ def list_rebalance_rule_candidates(rse, mode=None, session=None):
         filter(models.ReplicationRule.did_type == DIDType.DATASET).\
         filter(models.ReplicationRule.copies == 1).\
         filter(models.ReplicationRule.child_rule_id.is_(None)).\
-        filter(models.ReplicationRule.grouping.in_(allowed_grouping)).\
+        filter(models.ReplicationRule.rule_grouping.in_(allowed_grouping)).\
         filter(models.DataIdentifier.bytes.isnot(None)).\
         filter(models.DataIdentifier.is_open == 0).\
         filter(models.DataIdentifier.did_type == DIDType.DATASET).\
@@ -309,7 +309,7 @@ def select_target_rse(parent_rule, current_rse, rse_expression, subscription_id,
     #     pass
     #     # get_subscription_by_id(subscription_id, session)
     if force_expression is not None:
-        if parent_rule['grouping'] != RuleGrouping.NONE:
+        if parent_rule['rule_grouping'] != RuleGrouping.NONE:
             rses = parse_expression(expression='(%s)\\%s' % (force_expression, target_rse), filter={'availability_write': True}, session=session)
         else:
             # in order to avoid replication of the part of distributed dataset not present at rabalanced rse -> rses in force_expression

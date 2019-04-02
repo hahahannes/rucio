@@ -223,7 +223,7 @@ def add_rule(dids, account, copies, rse_expression, grouping, weight, lifetime, 
                                                   copies=copies,
                                                   rse_expression=rse_expression,
                                                   locked=locked,
-                                                  grouping=grouping,
+                                                  rule_grouping=grouping,
                                                   expires_at=expires_at,
                                                   weight=weight,
                                                   source_replica_expression=source_replica_expression,
@@ -323,11 +323,11 @@ def add_rule(dids, account, copies, rse_expression, grouping, weight, lifetime, 
             if new_rule.locks_stuck_cnt > 0:
                 new_rule.state = RuleState.STUCK
                 new_rule.error = 'MissingSourceReplica'
-                if new_rule.grouping != RuleGrouping.NONE:
+                if new_rule.rule_grouping != RuleGrouping.NONE:
                     session.query(models.DatasetLock).filter_by(rule_id=new_rule.id).update({'state': LockState.STUCK})
             elif new_rule.locks_replicating_cnt == 0:
                 new_rule.state = RuleState.OK
-                if new_rule.grouping != RuleGrouping.NONE:
+                if new_rule.rule_grouping != RuleGrouping.NONE:
                     session.query(models.DatasetLock).filter_by(rule_id=new_rule.id).update({'state': LockState.OK})
                     session.flush()
                 if new_rule.notification == RuleNotification.YES:
@@ -335,7 +335,7 @@ def add_rule(dids, account, copies, rse_expression, grouping, weight, lifetime, 
                 generate_rule_notifications(rule=new_rule, replicating_locks_before=0, session=session)
             else:
                 new_rule.state = RuleState.REPLICATING
-                if new_rule.grouping != RuleGrouping.NONE:
+                if new_rule.rule_grouping != RuleGrouping.NONE:
                     session.query(models.DatasetLock).filter_by(rule_id=new_rule.id).update({'state': LockState.REPLICATING})
 
             # Add rule to History
@@ -473,7 +473,7 @@ def add_rules(dids, rules, session=None):
 
                     # 4. Create the replication rule
                     with record_timer_block('rule.add_rules.create_rule'):
-                        grouping = {'ALL': RuleGrouping.ALL, 'NONE': RuleGrouping.NONE}.get(rule.get('grouping'), RuleGrouping.DATASET)
+                        grouping = {'ALL': RuleGrouping.ALL, 'NONE': RuleGrouping.NONE}.get(rule.get('rule_grouping'), RuleGrouping.DATASET)
 
                         expires_at = datetime.utcnow() + timedelta(seconds=rule.get('lifetime')) if rule.get('lifetime') is not None else None
 
@@ -494,7 +494,7 @@ def add_rules(dids, rules, session=None):
                                                           copies=rule['copies'],
                                                           rse_expression=rule['rse_expression'],
                                                           locked=rule.get('locked'),
-                                                          grouping=grouping,
+                                                          rule_grouping=grouping,
                                                           expires_at=expires_at,
                                                           weight=rule.get('weight'),
                                                           source_replica_expression=rule.get('source_replica_expression'),
@@ -572,11 +572,11 @@ def add_rules(dids, rules, session=None):
                     if new_rule.locks_stuck_cnt > 0:
                         new_rule.state = RuleState.STUCK
                         new_rule.error = 'MissingSourceReplica'
-                        if new_rule.grouping != RuleGrouping.NONE:
+                        if new_rule.rule_grouping != RuleGrouping.NONE:
                             session.query(models.DatasetLock).filter_by(rule_id=new_rule.id).update({'state': LockState.STUCK})
                     elif new_rule.locks_replicating_cnt == 0:
                         new_rule.state = RuleState.OK
-                        if new_rule.grouping != RuleGrouping.NONE:
+                        if new_rule.rule_grouping != RuleGrouping.NONE:
                             session.query(models.DatasetLock).filter_by(rule_id=new_rule.id).update({'state': LockState.OK})
                             session.flush()
                         if new_rule.notification == RuleNotification.YES:
@@ -584,7 +584,7 @@ def add_rules(dids, rules, session=None):
                         generate_rule_notifications(rule=new_rule, replicating_locks_before=0, session=session)
                     else:
                         new_rule.state = RuleState.REPLICATING
-                        if new_rule.grouping != RuleGrouping.NONE:
+                        if new_rule.rule_grouping != RuleGrouping.NONE:
                             session.query(models.DatasetLock).filter_by(rule_id=new_rule.id).update({'state': LockState.REPLICATING})
 
                     # Add rule to History
@@ -630,7 +630,7 @@ def inject_rule(rule_id, session=None):
                  account=rule.account,
                  copies=rule.copies,
                  rse_expression=rule.rse_expression,
-                 grouping='DATASET',
+                 rule_grouping='DATASET',
                  weight=None,
                  lifetime=lifetime,
                  locked=False,
@@ -700,11 +700,11 @@ def inject_rule(rule_id, session=None):
         if rule.locks_stuck_cnt > 0:
             rule.state = RuleState.STUCK
             rule.error = 'MissingSourceReplica'
-            if rule.grouping != RuleGrouping.NONE:
+            if rule.rule_grouping != RuleGrouping.NONE:
                 session.query(models.DatasetLock).filter_by(rule_id=rule.id).update({'state': LockState.STUCK})
         elif rule.locks_replicating_cnt == 0:
             rule.state = RuleState.OK
-            if rule.grouping != RuleGrouping.NONE:
+            if rule.rule_grouping != RuleGrouping.NONE:
                 session.query(models.DatasetLock).filter_by(rule_id=rule.id).update({'state': LockState.OK})
                 session.flush()
             if rule.notification == RuleNotification.YES:
@@ -714,7 +714,7 @@ def inject_rule(rule_id, session=None):
             release_parent_rule(child_rule_id=rule.id, session=session)
         else:
             rule.state = RuleState.REPLICATING
-            if rule.grouping != RuleGrouping.NONE:
+            if rule.rule_grouping != RuleGrouping.NONE:
                 session.query(models.DatasetLock).filter_by(rule_id=rule.id).update({'state': LockState.REPLICATING})
 
         # Add rule to History
@@ -758,7 +758,7 @@ def list_rules(filters={}, session=None):
                         pass
             elif key == 'did_type' and isinstance(value, string_types):
                 value = DIDType.from_string(value)
-            elif key == 'grouping' and isinstance(value, string_types):
+            elif key == 'rule_grouping' and isinstance(value, string_types):
                 value = RuleGrouping.from_string(value)
             query = query.filter(getattr(models.ReplicationRule, key) == value)
 
@@ -970,7 +970,7 @@ def repair_rule(rule_id, session=None):
             # Insert rule history
             insert_rule_history(rule=rule, recent=True, longterm=False, session=session)
             # Try to update the DatasetLocks
-            if rule.grouping != RuleGrouping.NONE:
+            if rule.rule_grouping != RuleGrouping.NONE:
                 session.query(models.DatasetLock).filter_by(rule_id=rule.id).update({'state': LockState.STUCK})
             logging.debug('%s while repairing rule %s', str(error), rule_id)
             return
@@ -990,7 +990,7 @@ def repair_rule(rule_id, session=None):
             # Insert rule history
             insert_rule_history(rule=rule, recent=True, longterm=False, session=session)
             # Try to update the DatasetLocks
-            if rule.grouping != RuleGrouping.NONE:
+            if rule.rule_grouping != RuleGrouping.NONE:
                 session.query(models.DatasetLock).filter_by(rule_id=rule.id).update({'state': LockState.STUCK})
             logging.debug('%s while repairing rule %s', type(error).__name__, rule_id)
             return
@@ -1024,7 +1024,7 @@ def repair_rule(rule_id, session=None):
         if nr_files * rule.copies != (rule.locks_ok_cnt + rule.locks_stuck_cnt + rule.locks_replicating_cnt):
             hard_repair = True
             logging.debug('Repairing rule %s in HARD mode', str(rule.id))
-        elif rule.copies > 1 and rule.grouping == RuleGrouping.NONE:
+        elif rule.copies > 1 and rule.rule_grouping == RuleGrouping.NONE:
             hard_repair = True
             logging.debug('Repairing rule %s in HARD mode', str(rule.id))
 
@@ -1056,7 +1056,7 @@ def repair_rule(rule_id, session=None):
                 # Insert rule history
                 insert_rule_history(rule=rule, recent=True, longterm=False, session=session)
                 # Try to update the DatasetLocks
-                if rule.grouping != RuleGrouping.NONE:
+                if rule.rule_grouping != RuleGrouping.NONE:
                     session.query(models.DatasetLock).filter_by(rule_id=rule.id).update({'state': LockState.STUCK})
                 logging.debug('%s while repairing rule %s', type(error).__name__, rule_id)
                 return
@@ -1093,7 +1093,7 @@ def repair_rule(rule_id, session=None):
             # Insert rule history
             insert_rule_history(rule=rule, recent=True, longterm=False, session=session)
             # Try to update the DatasetLocks
-            if rule.grouping != RuleGrouping.NONE:
+            if rule.rule_grouping != RuleGrouping.NONE:
                 session.query(models.DatasetLock).filter_by(rule_id=rule.id).update({'state': LockState.STUCK})
             logging.debug('%s while repairing rule %s', type(error).__name__, rule_id)
             return
@@ -1111,7 +1111,7 @@ def repair_rule(rule_id, session=None):
             # Insert rule history
             insert_rule_history(rule=rule, recent=True, longterm=False, session=session)
             # Try to update the DatasetLocks
-            if rule.grouping != RuleGrouping.NONE:
+            if rule.rule_grouping != RuleGrouping.NONE:
                 session.query(models.DatasetLock).filter_by(rule_id=rule.id).update({'state': LockState.STUCK})
             # TODO: Increase some kind of Stuck Counter here, The rule should at some point be SUSPENDED
             return
@@ -1125,7 +1125,7 @@ def repair_rule(rule_id, session=None):
             # Insert rule history
             insert_rule_history(rule=rule, recent=True, longterm=False, session=session)
             # Try to update the DatasetLocks
-            if rule.grouping != RuleGrouping.NONE:
+            if rule.rule_grouping != RuleGrouping.NONE:
                 session.query(models.DatasetLock).filter_by(rule_id=rule.id).update({'state': LockState.REPLICATING})
             return
 
@@ -1135,7 +1135,7 @@ def repair_rule(rule_id, session=None):
         insert_rule_history(rule=rule, recent=True, longterm=False, session=session)
         logging.info('Rule %s [%d/%d/%d] state=OK', str(rule.id), rule.locks_ok_cnt, rule.locks_replicating_cnt, rule.locks_stuck_cnt)
 
-        if rule.grouping != RuleGrouping.NONE:
+        if rule.rule_grouping != RuleGrouping.NONE:
             session.query(models.DatasetLock).filter_by(rule_id=rule.id).update({'state': LockState.OK})
             session.flush()
         if rule.notification == RuleNotification.YES:
@@ -1343,7 +1343,7 @@ def reduce_rule(rule_id, copies, exclude_expression=None, session=None):
         else:
             rse_expression = rule.rse_expression
 
-        grouping = {RuleGrouping.ALL: 'ALL', RuleGrouping.NONE: 'NONE'}.get(rule.grouping, 'DATASET')
+        grouping = {RuleGrouping.ALL: 'ALL', RuleGrouping.NONE: 'NONE'}.get(rule.rule_grouping, 'DATASET')
 
         if rule.expires_at:
             lifetime = (rule.expires_at - datetime.utcnow()).days * 24 * 3600 + (rule.expires_at - datetime.utcnow()).seconds
@@ -1356,7 +1356,7 @@ def reduce_rule(rule_id, copies, exclude_expression=None, session=None):
                                account=rule.account,
                                copies=copies,
                                rse_expression=rse_expression,
-                               grouping=grouping,
+                               rule_grouping=grouping,
                                weight=rule.weight,
                                lifetime=lifetime,
                                locked=rule.locked,
@@ -1400,7 +1400,7 @@ def move_rule(rule_id, rse_expression, session=None):
         if rule.state != RuleState.OK:
             raise RuleReplaceFailed('The source rule must be in state OK.')
 
-        grouping = {RuleGrouping.ALL: 'ALL', RuleGrouping.NONE: 'NONE'}.get(rule.grouping, 'DATASET')
+        grouping = {RuleGrouping.ALL: 'ALL', RuleGrouping.NONE: 'NONE'}.get(rule.rule_grouping, 'DATASET')
 
         if rule.expires_at:
             lifetime = (rule.expires_at - datetime.utcnow()).days * 24 * 3600 + (rule.expires_at - datetime.utcnow()).seconds
@@ -1413,7 +1413,7 @@ def move_rule(rule_id, rse_expression, session=None):
                                account=rule.account,
                                copies=rule.copies,
                                rse_expression=rse_expression,
-                               grouping=grouping,
+                               rule_grouping=grouping,
                                weight=rule.weight,
                                lifetime=lifetime,
                                locked=rule.locked,
@@ -1746,7 +1746,7 @@ def update_rules_for_lost_replica(scope, name, rse_id, nowait=False, session=Non
             pass
         elif rule.locks_replicating_cnt == 0 and rule.locks_stuck_cnt == 0:
             rule.state = RuleState.OK
-            if rule.grouping != RuleGrouping.NONE:
+            if rule.rule_grouping != RuleGrouping.NONE:
                 session.query(models.DatasetLock).filter_by(rule_id=rule.id).update({'state': LockState.OK})
                 session.flush()
             if rule_state_before != RuleState.OK:
@@ -1838,7 +1838,7 @@ def update_rules_for_bad_replica(scope, name, rse_id, nowait=False, session=None
             pass
         else:
             rule.state = RuleState.REPLICATING
-            if rule.grouping != RuleGrouping.NONE:
+            if rule.rule_grouping != RuleGrouping.NONE:
                 session.query(models.DatasetLock).filter_by(rule_id=rule.id).update({'state': LockState.REPLICATING})
         # Insert rule history
         insert_rule_history(rule=rule, recent=True, longterm=False, session=session)
@@ -1894,7 +1894,7 @@ def generate_rule_notifications(rule, replicating_locks_before=None, session=Non
                 pass
 
         # DATASETLOCK_OK NOTIFICATIONS:
-        if rule.grouping != RuleGrouping.NONE:
+        if rule.rule_grouping != RuleGrouping.NONE:
             # Only send DATASETLOCK_OK callbacks for ALL/DATASET grouped rules
             if rule.notification == RuleNotification.YES:
                 dataset_locks = session.query(models.DatasetLock).filter_by(rule_id=rule.id).all()
@@ -1988,7 +1988,7 @@ def insert_rule_history(rule, recent=True, longterm=False, session=None):
                                             did_type=rule.did_type, state=rule.state, error=rule.error, rse_expression=rule.rse_expression, copies=rule.copies,
                                             expires_at=rule.expires_at, weight=rule.weight, locked=rule.locked, locks_ok_cnt=rule.locks_ok_cnt,
                                             locks_replicating_cnt=rule.locks_replicating_cnt, locks_stuck_cnt=rule.locks_stuck_cnt, source_replica_expression=rule.source_replica_expression,
-                                            activity=rule.activity, grouping=rule.grouping, notification=rule.notification, stuck_at=rule.stuck_at, purge_replicas=rule.purge_replicas,
+                                            activity=rule.activity, grouping=rule.rule_grouping, notification=rule.notification, stuck_at=rule.stuck_at, purge_replicas=rule.purge_replicas,
                                             ignore_availability=rule.ignore_availability, ignore_account_limit=rule.ignore_account_limit, comments=rule.comments, created_at=rule.created_at,
                                             updated_at=rule.updated_at, child_rule_id=rule.child_rule_id, eol_at=rule.eol_at,
                                             split_container=rule.split_container, meta=rule.meta).save(session=session)
@@ -1997,7 +1997,7 @@ def insert_rule_history(rule, recent=True, longterm=False, session=None):
                                       did_type=rule.did_type, state=rule.state, error=rule.error, rse_expression=rule.rse_expression, copies=rule.copies,
                                       expires_at=rule.expires_at, weight=rule.weight, locked=rule.locked, locks_ok_cnt=rule.locks_ok_cnt,
                                       locks_replicating_cnt=rule.locks_replicating_cnt, locks_stuck_cnt=rule.locks_stuck_cnt, source_replica_expression=rule.source_replica_expression,
-                                      activity=rule.activity, grouping=rule.grouping, notification=rule.notification, stuck_at=rule.stuck_at, purge_replicas=rule.purge_replicas,
+                                      activity=rule.activity, grouping=rule.rule_grouping, notification=rule.notification, stuck_at=rule.stuck_at, purge_replicas=rule.purge_replicas,
                                       ignore_availability=rule.ignore_availability, ignore_account_limit=rule.ignore_account_limit, comments=rule.comments, created_at=rule.created_at,
                                       updated_at=rule.updated_at, child_rule_id=rule.child_rule_id, eol_at=rule.eol_at,
                                       split_container=rule.split_container, meta=rule.meta).save(session=session)
@@ -2410,7 +2410,7 @@ def __evaluate_did_detach(eval_did, session=None):
                 pass
             elif rule.locks_replicating_cnt == 0 and rule.locks_stuck_cnt == 0:
                 rule.state = RuleState.OK
-                if rule.grouping != RuleGrouping.NONE:
+                if rule.rule_grouping != RuleGrouping.NONE:
                     session.query(models.DatasetLock).filter_by(rule_id=rule.id).update({'state': LockState.OK})
                     session.flush()
                 if rule_locks_ok_cnt_before != rule.locks_ok_cnt:
@@ -2520,7 +2520,7 @@ def __evaluate_did_attach(eval_did, session=None):
                             # Insert rule history
                             insert_rule_history(rule=rule, recent=True, longterm=False, session=session)
                             # Try to update the DatasetLocks
-                            if rule.grouping != RuleGrouping.NONE:
+                            if rule.rule_grouping != RuleGrouping.NONE:
                                 session.query(models.DatasetLock).filter_by(rule_id=rule.id).update({'state': LockState.STUCK})
                             continue
 
@@ -2539,14 +2539,14 @@ def __evaluate_did_attach(eval_did, session=None):
                             # Insert rule history
                             insert_rule_history(rule=rule, recent=True, longterm=False, session=session)
                             # Try to update the DatasetLocks
-                            if rule.grouping != RuleGrouping.NONE:
+                            if rule.rule_grouping != RuleGrouping.NONE:
                                 session.query(models.DatasetLock).filter_by(rule_id=rule.id).update({'state': LockState.STUCK})
                             continue
 
                         # 3. Apply the Replication rule to the Files
                         preferred_rse_ids = []
                         # 3.1 Check if the dids in question are files added to a dataset with DATASET/ALL grouping
-                        if new_child_dids[0].child_type == DIDType.FILE and rule.grouping != RuleGrouping.NONE:
+                        if new_child_dids[0].child_type == DIDType.FILE and rule.rule_grouping != RuleGrouping.NONE:
                             # Are there any existing did's in this dataset
                             brother_did = session.query(models.DataIdentifierAssociation).filter(
                                 models.DataIdentifierAssociation.scope == eval_did.scope,
@@ -2576,7 +2576,7 @@ def __evaluate_did_attach(eval_did, session=None):
                             # Insert rule history
                             insert_rule_history(rule=rule, recent=True, longterm=False, session=session)
                             # Try to update the DatasetLocks
-                            if rule.grouping != RuleGrouping.NONE:
+                            if rule.rule_grouping != RuleGrouping.NONE:
                                 session.query(models.DatasetLock).filter_by(rule_id=rule.id).update({'state': LockState.STUCK})
                             continue
 
@@ -2590,11 +2590,11 @@ def __evaluate_did_attach(eval_did, session=None):
                                 session.query(models.DatasetLock).filter_by(rule_id=rule.id).update({'state': LockState.STUCK})
                         elif rule.locks_replicating_cnt > 0:
                             rule.state = RuleState.REPLICATING
-                            if rule.grouping != RuleGrouping.NONE:
+                            if rule.rule_grouping != RuleGrouping.NONE:
                                 session.query(models.DatasetLock).filter_by(rule_id=rule.id).update({'state': LockState.REPLICATING})
                         elif rule.locks_replicating_cnt == 0 and rule.locks_stuck_cnt == 0:
                             rule.state = RuleState.OK
-                            if rule.grouping != RuleGrouping.NONE:
+                            if rule.rule_grouping != RuleGrouping.NONE:
                                 session.query(models.DatasetLock).filter_by(rule_id=rule.id).update({'state': LockState.OK})
                                 session.flush()
                             if rule_locks_ok_cnt_before < rule.locks_ok_cnt:
@@ -3102,7 +3102,7 @@ def archive_localgroupdisk_datasets(scope, name, session=None):
                          account=rse['account'],
                          copies=1,
                          rse_expression=rse['rse'],
-                         grouping='DATASET',
+                         rule_grouping='DATASET',
                          weight=None,
                          lifetime=None,
                          locked=False,
