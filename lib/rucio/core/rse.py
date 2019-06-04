@@ -647,7 +647,7 @@ def delete_rse_limit(rse, name=None, rse_id=None, session=None):
 
 
 @transactional_session
-def set_rse_transfer_limits(rse, activity, rse_id=None, rse_expression=None, max_transfers=0, transfers=0, waitings=0, volume=0, session=None):
+def set_rse_transfer_limits(rse, activity, rse_id=None, rse_expression=None, max_transfers=0, transfers=0, waitings=0, volume=0, deadline=1, strategy='fifo', session=None):
     """
     Set RSE transfer limits.
 
@@ -658,6 +658,8 @@ def set_rse_transfer_limits(rse, activity, rse_id=None, rse_expression=None, max
     :param transfers: Current number of tranfers.
     :param waitings: Current number of waitings.
     :param volume: Maximum transfer volume in bytes.
+    :param deadline: Maximum waiting time until a datasets gets released.
+    :param strategy: Stragey to handle datasets `fifo` or `grouped_fifo`.
     :param session: The database session in use.
 
     :returns: True if successful, otherwise false.
@@ -666,7 +668,9 @@ def set_rse_transfer_limits(rse, activity, rse_id=None, rse_expression=None, max
         if not rse_id:
             rse_id = get_rse_id(rse=rse, session=session)
 
-        rse_tr_limit = models.RSETransferLimit(rse_id=rse_id, activity=activity, rse_expression=rse_expression, max_transfers=max_transfers, transfers=transfers, waitings=waitings, volume=volume)
+        rse_tr_limit = models.RSETransferLimit(rse_id=rse_id, activity=activity, rse_expression=rse_expression,
+                                               max_transfers=max_transfers, transfers=transfers, waitings=waitings,
+                                               volume=volume, strategy=strategy, deadline=deadline)
         rse_tr_limit = session.merge(rse_tr_limit)
         rowcount = rse_tr_limit.save(session=session)
         return rowcount
@@ -702,7 +706,9 @@ def get_rse_transfer_limits(rse=None, activity=None, rse_id=None, session=None):
             limits[limit.activity][limit.rse_id] = {'max_transfers': limit.max_transfers,
                                                     'transfers': limit.transfers,
                                                     'waitings': limit.waitings,
-                                                    'volume': limit.volume}
+                                                    'volume': limit.volume,
+                                                    'strategy': limit.strategy,
+                                                    'deadline': limit.deadline}
         return limits
     except IntegrityError as error:
         raise exception.RucioException(error.args)

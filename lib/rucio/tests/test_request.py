@@ -23,7 +23,7 @@ from nose.tools import assert_equal
 from rucio.common.utils import generate_uuid
 from rucio.core.did import attach_dids, add_did
 from rucio.core.replica import add_replica
-from rucio.core.request import release_all_waiting_requests, queue_requests, get_request_by_did, release_waiting_requests_per_free_volume, release_waiting_requests_grouped_fifo, release_waiting_requests_fifo
+from rucio.core.request import release_all_waiting_requests, queue_requests, get_request_by_did, release_waiting_requests_per_free_volume, release_waiting_requests_grouped_fifo, release_waiting_requests_fifo, release_waiting_requests_per_deadline
 from rucio.core.rse import get_rse_id, set_rse_transfer_limits
 from rucio.db.sqla import session, models, constants
 
@@ -45,11 +45,11 @@ class TestRequestCore(object):
 
     def setUp(self):
         self.db_session.query(models.Request).delete()
-        self.db_session.commit()
         # set transfer limits to put requests in waiting state
         set_rse_transfer_limits(self.dest_rse, self.user_activity, max_transfers=1, session=self.db_session)
         set_rse_transfer_limits(self.dest_rse, self.all_activities, max_transfers=1, session=self.db_session)
         set_rse_transfer_limits(self.dest_rse, 'ignore', max_transfers=1, session=self.db_session)
+        self.db_session.commit()
 
     def tearDown(self):
         self.db_session.commit()
@@ -257,7 +257,7 @@ class TestRequestCore(object):
         if self.dialect == 'mysql':
             return True
 
-        # set max_volume to 0 to check first without releasing extra requests
+        # set volume and deadline to 0 to check first without releasing extra requests
         set_rse_transfer_limits(self.dest_rse, self.all_activities, volume=0, max_transfers=1, session=self.db_session)
 
         # one request with an unattached DID -> one request should be released
@@ -282,7 +282,7 @@ class TestRequestCore(object):
             }
         }]
         queue_requests(requests, session=self.db_session)
-        release_waiting_requests_grouped_fifo(self.dest_rse, count=1, session=self.db_session)
+        release_waiting_requests_grouped_fifo(self.dest_rse, count=1, volume=0, deadline=0, session=self.db_session)
         request = get_request_by_did(self.scope, name, self.dest_rse, session=self.db_session)
         assert_equal(request['state'], constants.RequestState.QUEUED)
 
@@ -311,7 +311,7 @@ class TestRequestCore(object):
             }
         }]
         queue_requests(requests, session=self.db_session)
-        release_waiting_requests_grouped_fifo(self.dest_rse, count=1, session=self.db_session)
+        release_waiting_requests_grouped_fifo(self.dest_rse, count=1, volume=0, deadline=0, session=self.db_session)
         request = get_request_by_did(self.scope, name, self.dest_rse, session=self.db_session)
         assert_equal(request['state'], constants.RequestState.QUEUED)
 
@@ -417,7 +417,7 @@ class TestRequestCore(object):
             }
         }]
         queue_requests(requests, session=self.db_session)
-        release_waiting_requests_grouped_fifo(self.dest_rse, count=1, session=self.db_session)
+        release_waiting_requests_grouped_fifo(self.dest_rse, count=1, deadline=0, volume=0, session=self.db_session)
         request_1 = get_request_by_did(self.scope, name1, self.dest_rse, session=self.db_session)
         assert_equal(request_1['state'], constants.RequestState.QUEUED)
         request_2 = get_request_by_did(self.scope, name2, self.dest_rse, session=self.db_session)
@@ -515,7 +515,7 @@ class TestRequestCore(object):
         }]
 
         queue_requests(requests, session=self.db_session)
-        amount_updated_requests = release_waiting_requests_grouped_fifo(self.dest_rse, count=1, session=self.db_session)
+        amount_updated_requests = release_waiting_requests_grouped_fifo(self.dest_rse, count=1, deadline=0, volume=10, session=self.db_session)
         assert_equal(amount_updated_requests, 3)
         # released because it got requested first
         request_1 = get_request_by_did(self.scope, name1, self.dest_rse, session=self.db_session)
@@ -619,7 +619,7 @@ class TestRequestCore(object):
         }]
 
         queue_requests(requests, session=self.db_session)
-        release_waiting_requests_grouped_fifo(self.dest_rse, count=1, session=self.db_session)
+        release_waiting_requests_grouped_fifo(self.dest_rse, count=1, deadline=0, volume=5, session=self.db_session)
         # released because it got requested first
         request_1 = get_request_by_did(self.scope, name1, self.dest_rse, session=self.db_session)
         assert_equal(request_1['state'], constants.RequestState.QUEUED)
@@ -631,6 +631,57 @@ class TestRequestCore(object):
         assert_equal(request_3['state'], constants.RequestState.WAITING)
         request_4 = get_request_by_did(self.scope, name4, self.dest_rse, session=self.db_session)
         assert_equal(request_4['state'], constants.RequestState.WAITING)
+
+        # with deadline check ->
+        self.db_session.query(models.Request).delete()
+        self.db_session.commit()
+        name1 = generate_uuid()
+        add_replica(self.source_rse, self.scope, name1, 1, self.account)
+        name2 = generate_uuid()
+        add_replica(self.source_rse, self.scope, name2, 1, self.account)
+        current_hour = datetime.now().hour
+        requests = [{
+            'source_rse_id': self.source_rse_id,
+            'dest_rse_id': self.dest_rse_id,
+            'request_type': constants.RequestType.TRANSFER,
+            'requested_at': datetime.now().replace(hour=current_hour - 2),
+            'request_id': generate_uuid(),
+            'name': name1,
+            'scope': self.scope,
+            'rule_id': generate_uuid(),
+            'retry_count': 1,
+            'attributes': {
+                'activity': 'User Subscription',
+                'bytes': 1,
+                'md5': '',
+                'adler32': ''
+            }
+        }, {
+            'source_rse_id': self.source_rse_id,
+            'dest_rse_id': self.dest_rse_id,
+            'request_type': constants.RequestType.TRANSFER,
+            'requested_at': datetime.now(),
+            'request_id': generate_uuid(),
+            'name': name2,
+            'scope': self.scope,
+            'rule_id': generate_uuid(),
+            'retry_count': 1,
+            'attributes': {
+                'activity': 'User Subscription',
+                'bytes': 1,
+                'md5': '',
+                'adler32': ''
+            }
+        }]
+        queue_requests(requests, session=self.db_session)
+        request = get_request_by_did(self.scope, name1, self.dest_rse, session=self.db_session)
+        release_waiting_requests_grouped_fifo(self.source_rse, count=0, deadline=1, volume=0, session=self.db_session)
+        # queued because of deadline
+        request = get_request_by_did(self.scope, name1, self.dest_rse, session=self.db_session)
+        assert_equal(request['state'], constants.RequestState.QUEUED)
+        # waiting because count=0
+        request = get_request_by_did(self.scope, name2, self.dest_rse, session=self.db_session)
+        assert_equal(request['state'], constants.RequestState.WAITING)
 
     def test_release_waiting_requests_fifo(self):
         """ REQUEST (CORE): release waiting requests based on FIFO. """
@@ -817,3 +868,125 @@ class TestRequestCore(object):
         assert_equal(request['state'], constants.RequestState.QUEUED)
         request = get_request_by_did(self.scope, name2, self.dest_rse, session=self.db_session)
         assert_equal(request['state'], constants.RequestState.QUEUED)
+
+    def test_release_waiting_requests_per_deadline(self):
+        """ REQUEST (CORE): release grouped waiting requests that exceeded waiting time."""
+        if self.dialect == 'mysql':
+            return True
+
+        # a request that exceeded the maximal waiting time to be released (1 hour) -> release one request -> only the exceeded request should be released
+        set_rse_transfer_limits(rse=self.source_rse, activity=self.all_activities, strategy='grouped_fifo', session=self.db_session)
+        name1 = generate_uuid()
+        add_replica(self.source_rse, self.scope, name1, 1, self.account, session=self.db_session)
+        name2 = generate_uuid()
+        add_replica(self.source_rse, self.scope, name2, 1, self.account, session=self.db_session)
+        current_hour = datetime.now().hour
+        requests = [{
+            'source_rse_id': self.source_rse_id,
+            'dest_rse_id': self.dest_rse_id,
+            'request_type': constants.RequestType.TRANSFER,
+            'requested_at': datetime.now().replace(hour=current_hour - 2),
+            'request_id': generate_uuid(),
+            'name': name1,
+            'scope': self.scope,
+            'rule_id': generate_uuid(),
+            'retry_count': 1,
+            'attributes': {
+                'activity': 'User Subscription',
+                'bytes': 1,
+                'md5': '',
+                'adler32': ''
+            }
+        }, {
+            'source_rse_id': self.source_rse_id,
+            'dest_rse_id': self.dest_rse_id,
+            'request_type': constants.RequestType.TRANSFER,
+            'requested_at': datetime.now(),
+            'request_id': generate_uuid(),
+            'name': name2,
+            'scope': self.scope,
+            'rule_id': generate_uuid(),
+            'retry_count': 1,
+            'attributes': {
+                'activity': 'User Subscription',
+                'bytes': 1,
+                'md5': '',
+                'adler32': ''
+            }
+        }]
+        queue_requests(requests, session=self.db_session)
+        request = get_request_by_did(self.scope, name1, self.dest_rse, session=self.db_session)
+        release_waiting_requests_per_deadline(self.source_rse, deadline=1, session=self.db_session)
+        request = get_request_by_did(self.scope, name1, self.dest_rse, session=self.db_session)
+        assert_equal(request['state'], constants.RequestState.QUEUED)
+        request = get_request_by_did(self.scope, name2, self.dest_rse, session=self.db_session)
+        assert_equal(request['state'], constants.RequestState.WAITING)
+
+        # a request that exceeded the maximal waiting time to be released (1 hour) -> release one request -> release all requests of the same dataset
+        name1 = generate_uuid()
+        add_replica(self.source_rse, self.scope, name1, 1, self.account, session=self.db_session)
+        name2 = generate_uuid()
+        add_replica(self.source_rse, self.scope, name2, 1, self.account, session=self.db_session)
+        name3 = generate_uuid()
+        add_replica(self.source_rse, self.scope, name3, 1, self.account, session=self.db_session)
+        dataset_name = generate_uuid()
+        add_did(self.scope, dataset_name, constants.DIDType.DATASET, self.account, session=self.db_session)
+        attach_dids(self.scope, dataset_name, [{'name': name1, 'scope': self.scope}, {'name': name2, 'scope': self.scope}], self.account, session=self.db_session)
+        current_hour = datetime.now().hour
+        requests = [{
+            'source_rse_id': self.source_rse_id,
+            'dest_rse_id': self.dest_rse_id,
+            'request_type': constants.RequestType.TRANSFER,
+            'requested_at': datetime.now().replace(hour=current_hour - 2),
+            'request_id': generate_uuid(),
+            'name': name1,
+            'scope': self.scope,
+            'rule_id': generate_uuid(),
+            'retry_count': 1,
+            'attributes': {
+                'activity': 'User Subscription',
+                'bytes': 1,
+                'md5': '',
+                'adler32': ''
+            }
+        }, {
+            'source_rse_id': self.source_rse_id,
+            'dest_rse_id': self.dest_rse_id,
+            'request_type': constants.RequestType.TRANSFER,
+            'requested_at': datetime.now(),
+            'request_id': generate_uuid(),
+            'name': name2,
+            'scope': self.scope,
+            'rule_id': generate_uuid(),
+            'retry_count': 1,
+            'attributes': {
+                'activity': 'User Subscription',
+                'bytes': 1,
+                'md5': '',
+                'adler32': ''
+            }
+        }, {
+            'source_rse_id': self.source_rse_id,
+            'dest_rse_id': self.dest_rse_id,
+            'request_type': constants.RequestType.TRANSFER,
+            'requested_at': datetime.now(),
+            'request_id': generate_uuid(),
+            'name': name3,
+            'scope': self.scope,
+            'rule_id': generate_uuid(),
+            'retry_count': 1,
+            'attributes': {
+                'activity': 'User Subscription',
+                'bytes': 1,
+                'md5': '',
+                'adler32': ''
+            }
+        }]
+        queue_requests(requests, session=self.db_session)
+        release_waiting_requests_per_deadline(self.source_rse, deadline=1, session=self.db_session)
+        request = get_request_by_did(self.scope, name1, self.dest_rse, session=self.db_session)
+        assert_equal(request['state'], constants.RequestState.QUEUED)
+        request = get_request_by_did(self.scope, name2, self.dest_rse, session=self.db_session)
+        assert_equal(request['state'], constants.RequestState.QUEUED)
+        request = get_request_by_did(self.scope, name3, self.dest_rse, session=self.db_session)
+        assert_equal(request['state'], constants.RequestState.WAITING)
